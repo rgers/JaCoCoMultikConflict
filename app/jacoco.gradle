@@ -1,0 +1,130 @@
+allprojects {
+    apply plugin: "jacoco"
+
+    jacoco {
+        toolVersion = "0.8.8"
+    }
+}
+
+task("jacocoReports") {
+    group = "Reporting"
+    description = "Generate Jacoco coverage reports for all modules"
+}
+
+// What to exclude from coverage report
+ext.excludedFilePatterns = [
+        '**/R.class',
+        '**/R$*.class',
+        '**/*$ViewInjector*.*',
+        '**/*$ViewBinder*.*',
+        '**/BuildConfig.*',
+        '**/Manifest*.*',
+        '**/*$Lambda$*.*',
+        '**/*$inlined$*.*',
+        '**/*Module.*',
+        '**/*Dagger*.*',
+        '**/*MembersInjector*.*', // Dagger auto-generated code.
+        '**/*_Provide*Factory*.*' // Dagger auto-generated code.
+]
+
+List<ConfigurableFileTree> getGeneratedClasses(Project project, String variant) {
+    def buildDir = project.getBuildDir()
+
+    // sources from Android library projects
+    def javaClasses = fileTree(
+            dir: "$buildDir/intermediates/javac/$variant/classes",
+            excludes: excludedFilePatterns
+    )
+    def kotlinClasses = fileTree(
+            dir: "$buildDir/tmp/kotlin-classes/$variant",
+            excludes: excludedFilePatterns
+    )
+
+    // sources from Kotlin JVM projects
+    def kotlinClassesFromKotlinJvmModule = fileTree(
+            dir: "$buildDir/classes/kotlin/main",
+            excludes: excludedFilePatterns
+    )
+
+    return [javaClasses, kotlinClasses, kotlinClassesFromKotlinJvmModule]
+}
+
+final def JACOCO_EXECUTION_PATH = "/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"
+
+private void configureHtmlAndXml(JacocoReportsContainer reports, Project project) {
+    reports.configure {
+        xml.required = true
+        html.required = true
+
+        // Aggregate these reports into the build dir of the root project.
+        def rootBuildDir = project.rootProject.buildDir
+        xml.outputLocation = file("$rootBuildDir/reports/jacoco/${project.name}/jacoco.xml")
+        html.outputLocation = file("$rootBuildDir/reports/jacoco/${project.name}/html")
+    }
+}
+
+subprojects {
+    // Run after evaluation so that it's possible to check the existence of the `com.android.library` plugin.
+    project.afterEvaluate {
+        if (project.plugins.hasPlugin("com.android.library")) {
+            jacocoReportsNoLocationClasses(project)
+
+            task jacocoTestReport(type: JacocoReport) {
+                configureHtmlAndXml(reports, project)
+
+                classDirectories.setFrom(files(getGeneratedClasses(project, "debug")))
+                sourceDirectories.setFrom(files([android.sourceSets.main.java.srcDirs]))
+                dependsOn(":${project.name}:testDebugUnitTest")
+                executionData.setFrom(files("$buildDir/$JACOCO_EXECUTION_PATH"))
+            }
+            jacocoReports.dependsOn jacocoTestReport
+        } else if (project.plugins.hasPlugin("com.android.application")) {
+            jacocoReportsNoLocationClasses(project)
+
+            // Only configure coverage for 'devDebug' product flavor
+            def variant = "devDebug"
+
+            task jacocoTestReport(type: JacocoReport) {
+                dependsOn "test${variant.capitalize()}UnitTest"
+
+                configureHtmlAndXml(reports, project)
+
+                classDirectories.setFrom(files(getGeneratedClasses(project, "devDebug")))
+
+                sourceDirectories.setFrom(files([
+                        android.sourceSets.main.java.srcDirs,
+                        android.sourceSets.dev.java.srcDirs,
+                        android.sourceSets.debug.java.srcDirs,
+                ]))
+
+                executionData.setFrom(files("${project.buildDir}/outputs/unit_test_code_coverage/${variant}UnitTest/test${variant.capitalize()}UnitTest.exec"))
+            }
+
+            jacocoReports.dependsOn jacocoTestReport
+        } else if (project.plugins.hasPlugin("java-library") || project.plugins.hasPlugin("org.jetbrains.kotlin.jvm")) {
+            jacocoTestReport {
+                configureHtmlAndXml(reports, project)
+
+                dependsOn(":app:testDebugUnitTest")
+                executionData.setFrom(files("${project(":app").buildDir}/$JACOCO_EXECUTION_PATH"))
+            }
+
+            jacocoReports.dependsOn jacocoTestReport
+        }
+    }
+}
+
+// Fix for Robolectric tests missing from Jacoco reports.
+private void jacocoReportsNoLocationClasses(Project subProject) {
+    subProject.android {
+        testOptions {
+            unitTests.all {
+                jacoco {
+                    includeNoLocationClasses = true
+                    // See https://github.com/gradle/gradle/issues/5184#issuecomment-457865951.
+                    excludes = ['jdk.internal.*']
+                }
+            }
+        }
+    }
+}
