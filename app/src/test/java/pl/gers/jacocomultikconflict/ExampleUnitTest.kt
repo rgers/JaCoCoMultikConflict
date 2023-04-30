@@ -12,8 +12,8 @@ import org.junit.Test
 class ExampleUnitTest {
     @Test
     fun multikest() {
-        val top = mk.ndarray(doubleArrayOf(1.0, 2.0, 3.0, 4.0, 5.0))
-        val bottom = mk.ndarray(doubleArrayOf(6.0, 7.0, 8.0, 9.0, 10.0))
+        val top = mk.ndarray(doubleArrayOf(1.0, 2.0))
+        val bottom = mk.ndarray(doubleArrayOf(6.0, 7.0))
         val matrix = mk.stack(top, bottom)
         mk.linalg.inv(matrix)
     }
